@@ -1,5 +1,5 @@
 name: Formfeed templates
-description: Validate and test Formfeed document templates, preview the changed ones on every pull request, and publish them from your default branch.
+description: Validate and test Formfeed document templates, preview the ones a pull request changes, and publish them.
 author: Formfeed
 branding:
   icon: file-text
