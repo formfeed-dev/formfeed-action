@@ -1,0 +1,147 @@
+name: Formfeed templates
+description: Validate and test Formfeed document templates, preview the changed ones on every pull request, and publish them from your default branch.
+author: Formfeed
+branding:
+  icon: file-text
+  color: purple
+
+inputs:
+  api-key:
+    description: A Formfeed API key. Validation and tests run offline without one; previews and publishing need one. A test key (ff_test_) renders previews for free.
+    required: false
+    default: ''
+  working-directory:
+    description: The folder of the Formfeed project, the one that holds formfeed.json.
+    required: false
+    default: '.'
+  version:
+    description: The version of the formfeed command line the steps run.
+    required: false
+    default: '0.3.16'
+  node-version:
+    description: The Node.js version the command line runs on.
+    required: false
+    default: '22'
+  validate:
+    description: Run `formfeed validate`, which compiles and checks every template and fails on errors.
+    required: false
+    default: 'true'
+  test:
+    description: Run `formfeed test`, which checks every data set and compares its output with the approved snapshot.
+    required: false
+    default: 'true'
+  preview:
+    description: Render the templates changed since the base branch through the API. `auto` does it on pull requests when an API key is set; `true` and `false` decide it yourself.
+    required: false
+    default: 'auto'
+  base:
+    description: The git ref the preview compares against. Defaults to the pull request's base branch.
+    required: false
+    default: ''
+  comment:
+    description: "Post the preview's summary on the pull request, updating the action's own comment on every run. Needs `pull-requests: write`."
+    required: false
+    default: 'true'
+  publish:
+    description: Push the templates and publish them, with the commit as change note. Set it on your default branch only, with a live key.
+    required: false
+    default: 'false'
+  channel:
+    description: With `publish`, push to this release channel instead of publishing.
+    required: false
+    default: ''
+  github-token:
+    description: The token that writes the comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  summary:
+    description: The path of formfeed-preview.md, when a preview ran.
+    value: ${{ steps.preview.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Validate
+      if: inputs.validate == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FORMFEED_VERSION: ${{ inputs.version }}
+        FORMFEED_API_KEY: ${{ inputs.api-key }}
+      run: npx --yes "formfeed@$FORMFEED_VERSION" validate --ci
+
+    - name: Test
+      if: inputs.test == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FORMFEED_VERSION: ${{ inputs.version }}
+        FORMFEED_API_KEY: ${{ inputs.api-key }}
+      run: npx --yes "formfeed@$FORMFEED_VERSION" test --ci
+
+    - name: Preview
+      id: preview
+      if: inputs.preview == 'true' || (inputs.preview == 'auto' && github.event_name == 'pull_request' && inputs.api-key != '')
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FORMFEED_VERSION: ${{ inputs.version }}
+        FORMFEED_API_KEY: ${{ inputs.api-key }}
+        BASE: ${{ inputs.base }}
+        BASE_BRANCH: ${{ github.base_ref }}
+      run: |
+        # the preview compares against the base branch, so it needs the history up to it
+        if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+          git fetch --no-tags --quiet --unshallow origin
+        fi
+        if [ -z "$BASE" ]; then
+          if [ -z "$BASE_BRANCH" ]; then
+            echo '::error::No base to compare against: set the input `base` outside pull requests'
+            exit 1
+          fi
+          git fetch --no-tags --quiet origin "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+          BASE="origin/$BASE_BRANCH"
+        fi
+        echo "summary=$PWD/formfeed-preview.md" >> "$GITHUB_OUTPUT"
+        npx --yes "formfeed@$FORMFEED_VERSION" ci preview --base "$BASE" --ci
+
+    - name: Upload the previews
+      if: always() && steps.preview.outcome != 'skipped'
+      uses: actions/upload-artifact@v4
+      with:
+        name: formfeed-preview
+        path: |
+          ${{ inputs.working-directory }}/formfeed-preview/
+          ${{ inputs.working-directory }}/formfeed-preview.md
+        if-no-files-found: ignore
+
+    - name: Comment on the pull request
+      if: always() && steps.preview.outcome != 'skipped' && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        SUMMARY: ${{ steps.preview.outputs.summary }}
+      run: node "$GITHUB_ACTION_PATH/scripts/comment.mjs" "$SUMMARY"
+
+    - name: Publish
+      if: inputs.publish == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FORMFEED_VERSION: ${{ inputs.version }}
+        FORMFEED_API_KEY: ${{ inputs.api-key }}
+        CHANNEL: ${{ inputs.channel }}
+        NOTE: ${{ github.sha }}
+      run: |
+        if [ -n "$CHANNEL" ]; then
+          npx --yes "formfeed@$FORMFEED_VERSION" templates push --channel "$CHANNEL" --message "$NOTE" --ci
+        else
+          npx --yes "formfeed@$FORMFEED_VERSION" templates push --publish --message "$NOTE" --ci
+        fi
