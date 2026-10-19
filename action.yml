@@ -17,7 +17,7 @@ inputs:
   version:
     description: The version of the formfeed command line the steps run.
     required: false
-    default: '0.3.17'
+    default: '0.3.18'
   node-version:
     description: The Node.js version the command line runs on.
     required: false
