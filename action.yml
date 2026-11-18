@@ -38,6 +38,22 @@ inputs:
     description: The git ref the preview compares against. Defaults to the pull request's base branch.
     required: false
     default: ''
+  data-sets:
+    description: Which data sets the preview renders. `all`, `default` (each template's default data set) or names separated by commas.
+    required: false
+    default: 'all'
+  compare:
+    description: Render each data set on the base branch too and compare the page counts. `auto` does it with a test key, which renders for free; `true` and `false` decide it yourself.
+    required: false
+    default: 'auto'
+  fail-on-page-change:
+    description: With `compare`, fail when a data set's page count differs from the base branch's.
+    required: false
+    default: 'true'
+  page-change-label:
+    description: While the pull request carries this label, a changed page count is reported and does not fail.
+    required: false
+    default: 'pages-changed'
   comment:
     description: "Post the preview's summary on the pull request, updating the action's own comment on every run. Needs `pull-requests: write`."
     required: false
@@ -59,6 +75,9 @@ outputs:
   summary:
     description: The path of formfeed-preview.md, when a preview ran.
     value: ${{ steps.preview.outputs.summary }}
+  pages-changed:
+    description: How many data sets changed their page count against the base branch, when a preview compared them.
+    value: ${{ steps.preview.outputs.pages-changed }}
 
 runs:
   using: composite
@@ -96,6 +115,10 @@ runs:
         FORMFEED_API_KEY: ${{ inputs.api-key }}
         BASE: ${{ inputs.base }}
         BASE_BRANCH: ${{ github.base_ref }}
+        DATA_SETS: ${{ inputs.data-sets }}
+        COMPARE: ${{ inputs.compare }}
+        FAIL_ON_PAGE_CHANGE: ${{ inputs.fail-on-page-change }}
+        LABELLED: ${{ contains(github.event.pull_request.labels.*.name, inputs.page-change-label) }}
       run: |
         # the preview compares against the base branch, so it needs the history up to it
         if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
@@ -110,7 +133,31 @@ runs:
           BASE="origin/$BASE_BRANCH"
         fi
         echo "summary=$PWD/formfeed-preview.md" >> "$GITHUB_OUTPUT"
-        npx --yes "formfeed@$FORMFEED_VERSION" ci preview --base "$BASE" --ci
+        args=(ci preview --base "$BASE" --ci)
+        # a command line pinned to an older version knows neither option and previews as it always did
+        # (read whole, not piped into grep -q, which can end the pipe early under pipefail)
+        help="$(npx --yes "formfeed@$FORMFEED_VERSION" ci preview --help)"
+        if [[ "$help" == *--compare* ]]; then
+          args+=(--data-sets "$DATA_SETS")
+          if [ "$COMPARE" = auto ]; then
+            # a test key renders the base for free; with a live key the base would count units too
+            case "$FORMFEED_API_KEY" in ff_test_*) COMPARE=true ;; *) COMPARE=false ;; esac
+          fi
+          if [ "$COMPARE" = true ]; then
+            args+=(--compare)
+            if [ "$FAIL_ON_PAGE_CHANGE" != true ] || [ "$LABELLED" = true ]; then
+              args+=(--allow-page-changes)
+            fi
+          fi
+        else
+          echo "::notice::formfeed@$FORMFEED_VERSION previews the default data sets only; data-sets and compare need a later version"
+        fi
+        status=0
+        npx --yes "formfeed@$FORMFEED_VERSION" "${args[@]}" || status=$?
+        if [ -f formfeed-preview/preview.json ]; then
+          node -e 'const r = require("./formfeed-preview/preview.json"); console.log("pages-changed=" + (r.pages_changed ?? 0))' >> "$GITHUB_OUTPUT"
+        fi
+        exit "$status"
 
     - name: Upload the previews
       if: always() && steps.preview.outcome != 'skipped'
