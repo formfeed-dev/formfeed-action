@@ -21,12 +21,12 @@ jobs:
       pull-requests: write # for the preview comment
     steps:
       - uses: actions/checkout@v4
-      - uses: formfeed-dev/formfeed-action@v1
+      - uses: formfeed-dev/formfeed-action@v2
         with:
           api-key: ${{ secrets.FORMFEED_TEST_KEY }}
 
       - if: github.event_name == 'push'
-        uses: formfeed-dev/formfeed-action@v1
+        uses: formfeed-dev/formfeed-action@v2
         with:
           api-key: ${{ secrets.FORMFEED_LIVE_KEY }}
           validate: false
@@ -81,6 +81,7 @@ A step that finds a problem fails the job, with every finding in the log.
 - **Costs.** Comparing renders every data set twice. With a test key that costs nothing; with a live key, `compare: auto` does not compare, and `compare: true` counts the units of both renders.
 - **Your project.** `npx formfeed init` creates a project folder, and `npx formfeed init --from-workspace` pulls the templates your workspace has. See the [command line](https://docs.formfeed.dev/cli) and [CI usage](https://docs.formfeed.dev/cli/ci) in the documentation.
 - **Release channels.** To try a change before it is live, push to a channel (`channel: staging`) and publish it in a later step; see [release channels](https://docs.formfeed.dev/templates/release-channels).
+- **Versions.** `@v2` renders every data set and, with a test key, fails a pull request whose page counts changed. `@v1` stays on `v1.0.0`, which renders each template's default data set and compares nothing; to keep its previews on `@v2`, set `data-sets: default` and `compare: false`.
 
 ## License
 
